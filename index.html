@@ -1,1 +1,343 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Inventory Counter</title>
+<style>
+:root{
+--bg:#0f1115;--card:#181c24;--field:#232938;--line:#323949;
+--primary:#3af2b2;--danger:#ff6b6b;--text:#fff;--muted:#a7abb5;--blue:#4dadff;
+}
+*{box-sizing:border-box}
+body{margin:0;padding:14px;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,"Segoe UI",sans-serif}
+.app{max-width:720px;margin:auto}
+h2,h3{color:var(--primary);margin-top:0}
+.card{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:16px;margin-bottom:14px}
+input,button,textarea{
+width:100%;padding:14px;margin:8px 0;border-radius:14px;border:1px solid var(--line);
+background:var(--field);color:var(--text);font-size:18px
+}
+button{background:var(--primary);color:#000;font-weight:800;border:0}
+button.secondary{background:#343b4d;color:#fff}
+button.danger{background:var(--danger);color:#fff}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.hidden{display:none!important}
+.preview,.video{width:100%;max-height:360px;object-fit:contain;border-radius:16px;border:1px solid var(--line);background:#000}
+.step,.muted{color:var(--muted)}
+.badge{display:inline-block;padding:5px 10px;border-radius:99px;background:#303648;color:var(--muted);font-size:13px;margin:3px}
+.row{display:flex;justify-content:space-between;border-bottom:1px solid var(--line);padding:10px 0;gap:10px}
+.status{padding:12px;border-radius:14px;background:#202635;margin:8px 0;color:var(--blue)}
+@media(max-width:650px){.grid{grid-template-columns:1fr}}
+</style>
+</head>
 
+<body>
+<div class="app">
+<h2>Inventory Counter</h2>
+
+<section id="setupPage" class="card">
+<h3>Start</h3>
+<input id="userName" placeholder="Your name">
+<input id="webAppUrl" placeholder="Apps Script Web App URL">
+<button onclick="saveSetup()">Continue</button>
+</section>
+
+<section id="mainApp" class="hidden">
+<div class="card">
+<span class="badge" id="userBadge"></span>
+<span class="badge" id="pendingBadge"></span>
+<div id="statusBox" class="status hidden"></div>
+</div>
+
+<section id="pagePhoto" class="card page">
+<div class="step">Step 1 of 6</div>
+<h3>Take Item Photo</h3>
+<input type="file" id="photoInput" accept="image/*" capture="environment" onchange="loadPhoto(event)">
+<img id="photoPreview" class="preview hidden">
+<div class="grid">
+<button class="secondary" onclick="clearPhoto()">Retake</button>
+<button onclick="nextPage()">Next</button>
+</div>
+</section>
+
+<section id="pageBarcode" class="card page hidden">
+<div class="step">Step 2 of 6</div>
+<h3>Barcode</h3>
+<input id="barcode" type="tel" inputmode="numeric" pattern="[0-9]*" placeholder="Scan or enter barcode">
+<button onclick="startBarcodeScanner()">Scan Barcode</button>
+<div id="scannerBox" class="hidden">
+<video id="barcodeVideo" class="video" autoplay playsinline></video>
+<button class="danger" onclick="stopBarcodeScanner()">Stop Scanner</button>
+</div>
+<div class="grid">
+<button class="secondary" onclick="prevPage()">Back</button>
+<button onclick="nextPage()">Next</button>
+</div>
+</section>
+
+<section id="pageCode" class="card page hidden">
+<div class="step">Step 3 of 6</div>
+<h3>Item Code</h3>
+<input id="itemCode" type="tel" inputmode="numeric" pattern="[0-9]*" placeholder="Item code">
+<div class="grid">
+<button class="secondary" onclick="prevPage()">Back</button>
+<button onclick="nextPage()">Next</button>
+</div>
+</section>
+
+<section id="pageUom" class="card page hidden">
+<div class="step">Step 4 of 6</div>
+<h3>UOM</h3>
+<input id="uom" placeholder="PCS, BOX, CTN" value="PCS">
+<div class="grid">
+<button class="secondary" onclick="prevPage()">Back</button>
+<button onclick="nextPage()">Next</button>
+</div>
+</section>
+
+<section id="pageQty" class="card page hidden">
+<div class="step">Step 5 of 6</div>
+<h3>Quantity</h3>
+<input id="quantity" type="tel" inputmode="numeric" pattern="[0-9]*" value="1">
+<textarea id="notes" placeholder="Notes, optional"></textarea>
+<div class="grid">
+<button class="secondary" onclick="prevPage()">Back</button>
+<button onclick="nextPage()">Next</button>
+</div>
+</section>
+
+<section id="pageReview" class="card page hidden">
+<div class="step">Step 6 of 6</div>
+<h3>Review & Submit</h3>
+<div id="reviewBox"></div>
+<div class="grid">
+<button class="secondary" onclick="prevPage()">Back</button>
+<button id="submitBtn" onclick="submitEntry()">Submit</button>
+</div>
+<button class="danger" onclick="clearEntry()">Clear Entry</button>
+</section>
+
+<div class="card">
+<h3>Saved Locally</h3>
+<button class="secondary" onclick="retryPending()">Retry Pending Uploads</button>
+<button class="danger" onclick="resetSetup()">Reset User/App URL</button>
+</div>
+</section>
+</div>
+
+<script>
+const DEFAULT_WEB_APP_URL="https://script.google.com/macros/s/AKfycbwoDd_8WBZWctiw8SNGWtZRBxUraNjGCtlp-NR0Rlh7LcQcnadT8X0mRTQgyzYBZPJQZA/exec";
+const STORAGE_KEY="inventory_counter_settings_v2";
+const PENDING_KEY="inventory_counter_pending_v2";
+
+let settings=JSON.parse(localStorage.getItem(STORAGE_KEY))||{userName:"",webAppUrl:DEFAULT_WEB_APP_URL};
+let pending=JSON.parse(localStorage.getItem(PENDING_KEY))||[];
+let pages=[],currentPage=0,photoBase64="",scannerStream=null,scannerTimer=null;
+
+window.onload=()=>{
+pages=[...document.querySelectorAll(".page")];
+userName.value=settings.userName||"";
+webAppUrl.value=settings.webAppUrl||DEFAULT_WEB_APP_URL;
+if(settings.userName&&settings.webAppUrl)openApp();
+updatePendingBadge();
+};
+
+function msg(t){statusBox.textContent=t;statusBox.classList.remove("hidden")}
+function clearMsg(){statusBox.classList.add("hidden")}
+
+function saveSetup(){
+const name=userName.value.trim(),url=webAppUrl.value.trim();
+if(!name)return alert("Enter your name");
+if(!url.startsWith("https://script.google.com/"))return alert("Enter valid Apps Script URL");
+settings={userName:name,webAppUrl:url};
+localStorage.setItem(STORAGE_KEY,JSON.stringify(settings));
+openApp();
+}
+
+function openApp(){
+setupPage.classList.add("hidden");
+mainApp.classList.remove("hidden");
+userBadge.textContent="User: "+settings.userName;
+updatePendingBadge();
+}
+
+function resetSetup(){
+if(!confirm("Reset user and URL?"))return;
+localStorage.removeItem(STORAGE_KEY);
+location.reload();
+}
+
+function showPage(i){
+pages.forEach(p=>p.classList.add("hidden"));
+pages[i].classList.remove("hidden");
+currentPage=i;
+if(pages[i].id==="pageReview")renderReview();
+}
+function nextPage(){if(currentPage<pages.length-1)showPage(currentPage+1)}
+function prevPage(){if(currentPage>0)showPage(currentPage-1)}
+
+function loadPhoto(e){
+const file=e.target.files[0];
+if(!file)return;
+const reader=new FileReader();
+reader.onload=x=>compressImage(x.target.result,700,0.55,result=>{
+photoBase64=result;
+photoPreview.src=result;
+photoPreview.classList.remove("hidden");
+});
+reader.readAsDataURL(file);
+}
+
+function compressImage(base64,maxWidth,quality,cb){
+const img=new Image();
+img.onload=()=>{
+const canvas=document.createElement("canvas");
+const scale=Math.min(maxWidth/img.width,1);
+canvas.width=Math.round(img.width*scale);
+canvas.height=Math.round(img.height*scale);
+canvas.getContext("2d").drawImage(img,0,0,canvas.width,canvas.height);
+cb(canvas.toDataURL("image/jpeg",quality));
+};
+img.src=base64;
+}
+
+function clearPhoto(){
+photoBase64="";
+photoInput.value="";
+photoPreview.src="";
+photoPreview.classList.add("hidden");
+}
+
+async function startBarcodeScanner(){
+clearMsg();
+if(!location.protocol.startsWith("https")){
+alert("Barcode scan needs HTTPS. Use GitHub Pages link, not local file.");
+return;
+}
+if(!("BarcodeDetector" in window)){
+alert("Barcode scanner not supported. Enter barcode manually.");
+return;
+}
+try{
+scannerBox.classList.remove("hidden");
+scannerStream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:"environment"}}});
+barcodeVideo.srcObject=scannerStream;
+const detector=new BarcodeDetector({formats:["ean_13","ean_8","code_128","code_39","upc_a","upc_e","qr_code"]});
+scannerTimer=setInterval(async()=>{
+try{
+const codes=await detector.detect(barcodeVideo);
+if(codes.length){
+barcode.value=codes[0].rawValue;
+stopBarcodeScanner();
+msg("Barcode scanned: "+barcode.value);
+}
+}catch(err){}
+},600);
+}catch(err){
+stopBarcodeScanner();
+alert("Camera permission denied or scanner failed. Enter barcode manually.");
+}
+}
+
+function stopBarcodeScanner(){
+scannerBox.classList.add("hidden");
+if(scannerTimer){clearInterval(scannerTimer);scannerTimer=null}
+if(scannerStream){scannerStream.getTracks().forEach(t=>t.stop());scannerStream=null}
+}
+
+function getEntry(){
+return{
+userName:settings.userName,
+photoBase64,
+barcode:barcode.value.trim(),
+itemCode:itemCode.value.trim(),
+uom:uom.value.trim()||"PCS",
+quantity:Number(quantity.value||1),
+notes:notes.value.trim(),
+localTime:new Date().toLocaleString()
+};
+}
+
+function renderReview(){
+const e=getEntry();
+reviewBox.innerHTML=`
+${photoBase64?`<img src="${photoBase64}" class="preview">`:`<p class="muted">No photo selected</p>`}
+<div class="row"><span>Barcode</span><b>${esc(e.barcode||"-")}</b></div>
+<div class="row"><span>Item Code</span><b>${esc(e.itemCode||"-")}</b></div>
+<div class="row"><span>UOM</span><b>${esc(e.uom)}</b></div>
+<div class="row"><span>Quantity</span><b>${e.quantity}</b></div>
+<div class="row"><span>Notes</span><b>${esc(e.notes||"-")}</b></div>`;
+}
+
+async function submitEntry(){
+const entry=getEntry();
+if(!entry.photoBase64)return alert("Please take item photo");
+if(!entry.barcode&&!entry.itemCode)return alert("Enter barcode or item code");
+if(!entry.quantity||entry.quantity<=0)return alert("Enter valid quantity");
+
+submitBtn.disabled=true;
+submitBtn.textContent="Uploading...";
+msg("Uploading entry...");
+
+try{
+await uploadEntry(entry);
+msg("Saved to Google Sheet");
+clearEntry();
+showPage(0);
+}catch(err){
+pending.push(entry);
+savePending();
+msg("Upload failed. Saved locally. Retry later.");
+}
+submitBtn.disabled=false;
+submitBtn.textContent="Submit";
+}
+
+async function uploadEntry(entry){
+const res=await fetch(settings.webAppUrl,{
+method:"POST",
+headers:{"Content-Type":"text/plain;charset=utf-8"},
+body:JSON.stringify(entry)
+});
+const text=await res.text();
+let json;
+try{json=JSON.parse(text)}catch(e){throw new Error(text)}
+if(!json.success)throw new Error(json.message||"Upload failed");
+return json;
+}
+
+async function retryPending(){
+if(!pending.length){msg("No pending entries");return}
+msg("Retrying pending uploads...");
+const failed=[];
+let ok=0;
+for(const entry of pending){
+try{await uploadEntry(entry);ok++}catch(e){failed.push(entry)}
+}
+pending=failed;
+savePending();
+msg(ok+" uploaded, "+pending.length+" pending");
+}
+
+function savePending(){
+localStorage.setItem(PENDING_KEY,JSON.stringify(pending));
+updatePendingBadge();
+}
+function updatePendingBadge(){pendingBadge.textContent="Pending: "+pending.length}
+
+function clearEntry(){
+clearPhoto();
+barcode.value="";
+itemCode.value="";
+uom.value="PCS";
+quantity.value=1;
+notes.value="";
+}
+
+function esc(s){
+return String(s??"").replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[m]));
+}
+</script>
+</body>
+</html>
