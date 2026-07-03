@@ -14,7 +14,7 @@
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,"Segoe UI",sans-serif;padding:14px}
 .app{max-width:760px;margin:auto}
-h1{color:var(--primary);font-size:34px;margin:8px 0 18px}
+h1{color:var(--primary);font-size:32px;margin:8px 0 18px}
 h2,h3{color:var(--primary);margin-top:0}
 .card{background:var(--card);border:1px solid var(--line);border-radius:22px;padding:18px;margin-bottom:16px}
 input,button,textarea,select{
@@ -41,7 +41,7 @@ button.ghost{background:#252d3d;color:#fff}
 .good{color:var(--primary)}
 .bad{color:var(--danger)}
 .muted{color:var(--muted)}
-@media(max-width:650px){.grid{grid-template-columns:1fr}h1{font-size:30px}}
+@media(max-width:650px){.grid{grid-template-columns:1fr}h1{font-size:28px}}
 </style>
 </head>
 
@@ -50,18 +50,20 @@ button.ghost{background:#252d3d;color:#fff}
 <h1>Inventory Counter Pro</h1>
 
 <section id="setupPage" class="card">
-<h2>Start</h2>
+<h2>Start Count</h2>
 <input id="userName" placeholder="Your name">
+<input id="businessUnit" placeholder="Business Unit">
+<input id="storageLocation" placeholder="Storage Location">
 <input id="webAppUrl" placeholder="Apps Script Web App URL">
-<button onclick="saveSetup()">Continue</button>
+<button onclick="saveSetup()">Start Counting</button>
 </section>
 
 <section id="mainApp" class="hidden">
 
 <div class="card">
 <span class="badge" id="userBadge"></span>
+<span class="badge" id="branchBadge"></span>
 <span class="badge" id="pendingBadge"></span>
-<span class="badge" id="masterBadge">Loading master...</span>
 <div id="statusBox" class="status hidden"></div>
 </div>
 
@@ -81,10 +83,12 @@ button.ghost{background:#252d3d;color:#fff}
 <h2>2. Scan Barcode</h2>
 <input id="barcode" type="tel" inputmode="numeric" pattern="[0-9]*" placeholder="Scan or enter barcode">
 <button onclick="startBarcodeScanner()">Scan Barcode</button>
+
 <div id="scannerBox" class="hidden">
 <video id="barcodeVideo" class="video" autoplay playsinline></video>
 <button class="danger" onclick="stopBarcodeScanner()">Stop Scanner</button>
 </div>
+
 <div class="grid">
 <button class="secondary" onclick="prevPage()">Back</button>
 <button onclick="lookupByBarcode()">Next</button>
@@ -97,8 +101,9 @@ button.ghost{background:#252d3d;color:#fff}
 
 <div id="manualBox" class="hidden">
 <input id="manualCode" type="tel" inputmode="numeric" pattern="[0-9]*" placeholder="Enter item code - 6 or 13 digits">
+<button class="secondary" onclick="lookupByCode()">Find Item Code</button>
 <input id="manualName" placeholder="Item description">
-<input id="manualUom" placeholder="UOM e.g. PCS, Kilogram, Gram">
+<input id="manualUom" placeholder="UOM e.g. PCS, KG, GM">
 <select id="manualBatched">
 <option value="No">Not Batched</option>
 <option value="Yes">Batched Product</option>
@@ -115,7 +120,7 @@ button.ghost{background:#252d3d;color:#fff}
 <h2>4. Batch Number</h2>
 <input id="batchNumber" type="tel" inputmode="numeric" pattern="[0-9]*" maxlength="6" placeholder="Enter 6 digit batch number">
 <div class="grid">
-<button class="secondary" onclick="prevPageSmart()">Back</button>
+<button class="secondary" onclick="showPage(2)">Back</button>
 <button onclick="confirmBatch()">Next</button>
 </div>
 </section>
@@ -142,7 +147,7 @@ button.ghost{background:#252d3d;color:#fff}
 <textarea id="notes" placeholder="Notes, optional"></textarea>
 
 <div class="grid">
-<button class="secondary" onclick="goToProductOrBatchBack()">Back</button>
+<button class="secondary" onclick="goBackFromQty()">Back</button>
 <button onclick="confirmQty()">Next</button>
 </div>
 </section>
@@ -151,7 +156,7 @@ button.ghost{background:#252d3d;color:#fff}
 <h2>6. Confirm Item</h2>
 <div id="reviewBox"></div>
 <div class="grid">
-<button class="secondary" onclick="showPage(pageQtyIndex)">Back</button>
+<button class="secondary" onclick="showPage(4)">Back</button>
 <button id="submitBtn" onclick="submitEntry()">Confirm & Next</button>
 </div>
 <button class="danger" onclick="clearEntry()">Clear Entry</button>
@@ -160,7 +165,8 @@ button.ghost{background:#252d3d;color:#fff}
 <div class="card">
 <h3>Local Safety</h3>
 <button class="secondary" onclick="retryPending()">Retry Pending Uploads</button>
-<button class="danger" onclick="resetSetup()">Reset User/App URL</button>
+<button class="secondary" onclick="changeSetup()">Change User / Branch</button>
+<button class="danger" onclick="resetSetup()">Reset App</button>
 </div>
 
 </section>
@@ -168,95 +174,61 @@ button.ghost{background:#252d3d;color:#fff}
 
 <script>
 const DEFAULT_WEB_APP_URL="https://script.google.com/macros/s/AKfycbwoDd_8WBZWctiw8SNGWtZRBxUraNjGCtlp-NR0Rlh7LcQcnadT8X0mRTQgyzYBZPJQZA/exec";
-const STORAGE_KEY="inventory_counter_pro_settings_v1";
-const PENDING_KEY="inventory_counter_pro_pending_v1";
-const MASTER_FILE="product-master.csv";
+const STORAGE_KEY="inventory_counter_branch_settings_v1";
+const PENDING_KEY="inventory_counter_branch_pending_v1";
 
-let settings=JSON.parse(localStorage.getItem(STORAGE_KEY))||{userName:"",webAppUrl:DEFAULT_WEB_APP_URL};
+let settings=JSON.parse(localStorage.getItem(STORAGE_KEY))||{
+userName:"",
+businessUnit:"",
+storageLocation:"",
+webAppUrl:DEFAULT_WEB_APP_URL
+};
+
 let pending=JSON.parse(localStorage.getItem(PENDING_KEY))||[];
-let products=[],byUPC={},byCode={};
 let pages=[],currentPage=0;
 let photoBase64="",scannerStream=null,scannerTimer=null;
 let selectedProduct=null;
 let productFound=false;
 let qtyDigits="";
-let pageBatchIndex=3,pageQtyIndex=4,pageReviewIndex=5;
 
-window.onload=async()=>{
+window.onload=()=>{
 pages=[...document.querySelectorAll(".page")];
+
 userName.value=settings.userName||"";
+businessUnit.value=settings.businessUnit||"";
+storageLocation.value=settings.storageLocation||"";
 webAppUrl.value=settings.webAppUrl||DEFAULT_WEB_APP_URL;
-await loadProductMaster();
-if(settings.userName&&settings.webAppUrl)openApp();
+
+if(settings.userName&&settings.businessUnit&&settings.storageLocation&&settings.webAppUrl){
+openApp();
+}
+
 updatePendingBadge();
 updateStep();
+renderQty();
 };
 
-function msg(t){statusBox.textContent=t;statusBox.classList.remove("hidden")}
-function clearMsg(){statusBox.classList.add("hidden")}
-
-async function loadProductMaster(){
-try{
-const res=await fetch(MASTER_FILE+"?v="+Date.now());
-const txt=await res.text();
-products=parseCSV(txt).map(normalizeProduct).filter(p=>p.code);
-byUPC={};byCode={};
-products.forEach(p=>{
-if(p.upc) byUPC[p.upc]=p;
-byCode[p.code]=p;
-});
-masterBadge.textContent="Master: "+products.length+" items";
-}catch(e){
-masterBadge.textContent="Master not loaded";
-msg("Product master not loaded. Manual entry still works.");
-}
+function msg(t){
+statusBox.textContent=t;
+statusBox.classList.remove("hidden");
 }
 
-function normalizeProduct(r){
-const get=(...names)=>{
-for(const n of names){
-const k=Object.keys(r).find(x=>x.trim().toLowerCase()===n.toLowerCase());
-if(k)return String(r[k]||"").trim();
-}
-return "";
-};
-return{
-code:get("Product Code","SKU","Item Code"),
-name:get("Product Name","Product","Item Description"),
-category:get("Product Category","Category"),
-uom:get("UOM"),
-upc:get("UPC","Barcode").replace(/\D/g,""),
-bom:get("Bill of Materials"),
-batched:get("Batched Product.","Batched Product","Batched")
-};
-}
-
-function parseCSV(text){
-const rows=[];let row=[],val="",q=false;
-for(let i=0;i<text.length;i++){
-const c=text[i],n=text[i+1];
-if(c=='"'&&q&&n=='"'){val+='"';i++}
-else if(c=='"'){q=!q}
-else if(c==","&&!q){row.push(val);val=""}
-else if((c=="\n"||c=="\r")&&!q){
-if(val||row.length){row.push(val);rows.push(row);row=[];val=""}
-if(c=="\r"&&n=="\n")i++;
-}else val+=c;
-}
-if(val||row.length){row.push(val);rows.push(row)}
-const headers=rows.shift().map(h=>h.trim());
-return rows.map(r=>{
-const o={};
-headers.forEach((h,i)=>o[h]=r[i]||"");
-return o;
-});
+function clearMsg(){
+statusBox.classList.add("hidden");
 }
 
 function saveSetup(){
-const name=userName.value.trim(),url=webAppUrl.value.trim();
+const name=userName.value.trim();
+const bu=businessUnit.value.trim();
+const loc=storageLocation.value.trim();
+const url=webAppUrl.value.trim();
+
 if(!name)return alert("Enter your name");
+if(!bu)return alert("Enter Business Unit");
+if(!loc)return alert("Enter Storage Location");
 if(!url.startsWith("https://script.google.com/"))return alert("Enter valid Apps Script URL");
-settings={userName:name,webAppUrl:url};
+
+settings={userName:name,businessUnit:bu,storageLocation:loc,webAppUrl:url};
 localStorage.setItem(STORAGE_KEY,JSON.stringify(settings));
 openApp();
 }
@@ -265,11 +237,19 @@ function openApp(){
 setupPage.classList.add("hidden");
 mainApp.classList.remove("hidden");
 userBadge.textContent="User: "+settings.userName;
+branchBadge.textContent=settings.businessUnit+" / "+settings.storageLocation;
+updatePendingBadge();
+}
+
+function changeSetup(){
+mainApp.classList.add("hidden");
+setupPage.classList.remove("hidden");
 }
 
 function resetSetup(){
-if(!confirm("Reset user and URL?"))return;
+if(!confirm("Reset app settings and pending uploads?"))return;
 localStorage.removeItem(STORAGE_KEY);
+localStorage.removeItem(PENDING_KEY);
 location.reload();
 }
 
@@ -277,10 +257,11 @@ function showPage(i){
 pages.forEach(p=>p.classList.add("hidden"));
 pages[i].classList.remove("hidden");
 currentPage=i;
-if(i===pageReviewIndex)renderReview();
+if(i===5)renderReview();
 updateStep();
 window.scrollTo({top:0,behavior:"smooth"});
 }
+
 function nextPage(){if(currentPage<pages.length-1)showPage(currentPage+1)}
 function prevPage(){if(currentPage>0)showPage(currentPage-1)}
 
@@ -291,6 +272,7 @@ stepFill.style.width=((currentPage+1)/pages.length*100)+"%";
 function loadPhoto(e){
 const file=e.target.files[0];
 if(!file)return;
+
 const reader=new FileReader();
 reader.onload=x=>compressImage(x.target.result,760,0.58,result=>{
 photoBase64=result;
@@ -322,23 +304,41 @@ photoPreview.classList.add("hidden");
 
 async function startBarcodeScanner(){
 clearMsg();
-if(!location.protocol.startsWith("https"))return alert("Scanner needs HTTPS.");
-if(!("BarcodeDetector" in window))return alert("Scanner not supported. Enter barcode manually.");
+
+if(!location.protocol.startsWith("https")){
+return alert("Scanner needs HTTPS.");
+}
+
+if(!("BarcodeDetector" in window)){
+return alert("Barcode scanner not supported on this browser. Enter barcode manually.");
+}
+
 try{
 scannerBox.classList.remove("hidden");
-scannerStream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:"environment"}}});
+
+scannerStream=await navigator.mediaDevices.getUserMedia({
+video:{facingMode:{ideal:"environment"}}
+});
+
 barcodeVideo.srcObject=scannerStream;
-const detector=new BarcodeDetector({formats:["ean_13","ean_8","code_128","code_39","upc_a","upc_e","qr_code"]});
+
+const detector=new BarcodeDetector({
+formats:["ean_13","ean_8","code_128","code_39","upc_a","upc_e","qr_code"]
+});
+
 scannerTimer=setInterval(async()=>{
 try{
 const codes=await detector.detect(barcodeVideo);
 if(codes.length){
-barcode.value=codes[0].rawValue;
+barcode.value=codes[0].rawValue.replace(/\D/g,"");
 stopBarcodeScanner();
 msg("Barcode scanned: "+barcode.value);
+if(navigator.vibrate)navigator.vibrate(100);
+lookupByBarcode();
 }
 }catch(e){}
 },600);
+
 }catch(e){
 stopBarcodeScanner();
 alert("Camera permission denied or scanner failed.");
@@ -347,19 +347,43 @@ alert("Camera permission denied or scanner failed.");
 
 function stopBarcodeScanner(){
 scannerBox.classList.add("hidden");
-if(scannerTimer){clearInterval(scannerTimer);scannerTimer=null}
-if(scannerStream){scannerStream.getTracks().forEach(t=>t.stop());scannerStream=null}
+
+if(scannerTimer){
+clearInterval(scannerTimer);
+scannerTimer=null;
 }
 
-function lookupByBarcode(){
+if(scannerStream){
+scannerStream.getTracks().forEach(t=>t.stop());
+scannerStream=null;
+}
+}
+
+async function lookupByBarcode(){
 const bc=barcode.value.trim().replace(/\D/g,"");
-selectedProduct=null;productFound=false;
+selectedProduct=null;
+productFound=false;
 manualBox.classList.add("hidden");
 
-if(bc && byUPC[bc]){
-selectedProduct=byUPC[bc];
+if(!bc){
+productResult.innerHTML=`<h3 class="bad">No barcode entered</h3><p class="muted">Enter item code manually.</p>`;
+manualBox.classList.remove("hidden");
+showPage(2);
+return;
+}
+
+msg("Looking up barcode...");
+
+try{
+const url=settings.webAppUrl+"?action=lookupBarcode&barcode="+encodeURIComponent(bc);
+const res=await fetch(url);
+const json=await res.json();
+
+if(json.success&&json.found){
+selectedProduct=json.product;
 productFound=true;
 showProductFound(selectedProduct);
+clearMsg();
 }else{
 productResult.innerHTML=`<h3 class="bad">Product not found</h3><p class="muted">Enter item details manually.</p>`;
 manualBox.classList.remove("hidden");
@@ -367,8 +391,45 @@ manualCode.value="";
 manualName.value="";
 manualUom.value="PCS";
 manualBatched.value="No";
+clearMsg();
 }
+
 showPage(2);
+
+}catch(e){
+msg("Lookup failed. Enter manually.");
+manualBox.classList.remove("hidden");
+showPage(2);
+}
+}
+
+async function lookupByCode(){
+const code=manualCode.value.trim();
+
+if(!/^(\d{6}|\d{13})$/.test(code)){
+return alert("Item code must be 6 or 13 digits.");
+}
+
+msg("Looking up item code...");
+
+try{
+const url=settings.webAppUrl+"?action=lookupCode&code="+encodeURIComponent(code);
+const res=await fetch(url);
+const json=await res.json();
+
+if(json.success&&json.found){
+selectedProduct=json.product;
+productFound=true;
+showProductFound(selectedProduct);
+manualBox.classList.add("hidden");
+clearMsg();
+}else{
+msg("Item not found. Enter description manually.");
+}
+
+}catch(e){
+msg("Lookup failed. Enter manually.");
+}
 }
 
 function showProductFound(p){
@@ -383,23 +444,16 @@ productResult.innerHTML=`
 }
 
 function confirmProduct(){
-if(productFound){
-if(isBatched(selectedProduct))showPage(pageBatchIndex);
-else showPage(pageQtyIndex);
+if(productFound&&selectedProduct){
+if(isBatched(selectedProduct))showPage(3);
+else showPage(4);
 return;
 }
 
 const code=manualCode.value.trim();
-if(!/^(\d{6}|\d{13})$/.test(code))return alert("Item code must be 6 or 13 digits.");
 
-let p=byCode[code];
-if(p){
-selectedProduct=p;
-productFound=true;
-showProductFound(p);
-if(isBatched(p))showPage(pageBatchIndex);
-else showPage(pageQtyIndex);
-return;
+if(!/^(\d{6}|\d{13})$/.test(code)){
+return alert("Item code must be 6 or 13 digits.");
 }
 
 if(!manualName.value.trim())return alert("Enter item description");
@@ -413,8 +467,9 @@ uom:manualUom.value.trim(),
 upc:barcode.value.trim(),
 batched:manualBatched.value
 };
-if(isBatched(selectedProduct))showPage(pageBatchIndex);
-else showPage(pageQtyIndex);
+
+if(isBatched(selectedProduct))showPage(3);
+else showPage(4);
 }
 
 function isBatched(p){
@@ -423,40 +478,60 @@ return /^(y|yes|true|1)$/i.test(String(p.batched||"").trim());
 
 function confirmBatch(){
 const b=batchNumber.value.trim();
-if(!/^\d{6}$/.test(b))return alert("Batch number must be exactly 6 digits.");
-showPage(pageQtyIndex);
+
+if(!/^\d{6}$/.test(b)){
+return alert("Batch number must be exactly 6 digits.");
 }
 
-function prevPageSmart(){showPage(2)}
-function goToProductOrBatchBack(){isBatched(selectedProduct)?showPage(pageBatchIndex):showPage(2)}
+showPage(4);
+}
+
+function goBackFromQty(){
+if(selectedProduct&&isBatched(selectedProduct))showPage(3);
+else showPage(2);
+}
 
 function qtyKey(d){
 qtyDigits=(qtyDigits+d).replace(/^0+/,"");
 if(qtyDigits.length>12)qtyDigits=qtyDigits.slice(0,12);
 renderQty();
 }
-function qtyBack(){qtyDigits=qtyDigits.slice(0,-1);renderQty()}
-function qtyClear(){qtyDigits="";renderQty()}
+
+function qtyBack(){
+qtyDigits=qtyDigits.slice(0,-1);
+renderQty();
+}
+
+function qtyClear(){
+qtyDigits="";
+renderQty();
+}
+
 function renderQty(){
-const n=(Number(qtyDigits||0)/1000);
+const n=Number(qtyDigits||0)/1000;
 qtyDisplay.textContent=n.toFixed(3);
 }
-function getQty(){return Number((Number(qtyDigits||0)/1000).toFixed(3))}
+
+function getQty(){
+return Number((Number(qtyDigits||0)/1000).toFixed(3));
+}
 
 function confirmQty(){
 if(getQty()<=0)return alert("Enter quantity");
-showPage(pageReviewIndex);
+showPage(5);
 }
 
 function getEntry(){
 return{
 userName:settings.userName,
+businessUnit:settings.businessUnit,
+storageLocation:settings.storageLocation,
 photoBase64,
 barcode:barcode.value.trim(),
 itemCode:selectedProduct?.code||"",
 itemDescription:selectedProduct?.name||"",
 uom:selectedProduct?.uom||"",
-batchNumber:isBatched(selectedProduct)?batchNumber.value.trim():"",
+batchNumber:selectedProduct&&isBatched(selectedProduct)?batchNumber.value.trim():"",
 quantity:getQty(),
 notes:notes.value.trim(),
 localTime:new Date().toLocaleString()
@@ -465,8 +540,11 @@ localTime:new Date().toLocaleString()
 
 function renderReview(){
 const e=getEntry();
+
 reviewBox.innerHTML=`
 ${photoBase64?`<img src="${photoBase64}" class="preview">`:`<p class="bad">No photo selected</p>`}
+<div class="row"><span>Business Unit</span><b>${esc(e.businessUnit)}</b></div>
+<div class="row"><span>Storage Location</span><b>${esc(e.storageLocation)}</b></div>
 <div class="row"><span>Barcode</span><b>${esc(e.barcode||"-")}</b></div>
 <div class="row"><span>Item Code</span><b>${esc(e.itemCode)}</b></div>
 <div class="row"><span>Description</span><b>${esc(e.itemDescription)}</b></div>
@@ -479,6 +557,7 @@ ${photoBase64?`<img src="${photoBase64}" class="preview">`:`<p class="bad">No ph
 
 async function submitEntry(){
 const entry=getEntry();
+
 if(!entry.photoBase64)return alert("Please take item photo");
 if(!entry.barcode&&!entry.itemCode)return alert("Barcode or item code required");
 if(!entry.quantity||entry.quantity<=0)return alert("Quantity required");
@@ -495,8 +574,9 @@ showPage(0);
 }catch(e){
 pending.push(entry);
 savePending();
-msg("Upload failed. Saved locally.");
+msg("Upload failed. Saved locally. Retry later.");
 }
+
 submitBtn.disabled=false;
 submitBtn.textContent="Confirm & Next";
 }
@@ -507,20 +587,40 @@ method:"POST",
 headers:{"Content-Type":"text/plain;charset=utf-8"},
 body:JSON.stringify(entry)
 });
+
 const text=await res.text();
 let json;
-try{json=JSON.parse(text)}catch(e){throw new Error(text)}
+
+try{
+json=JSON.parse(text);
+}catch(e){
+throw new Error(text);
+}
+
 if(!json.success)throw new Error(json.message||"Upload failed");
+
 return json;
 }
 
 async function retryPending(){
-if(!pending.length){msg("No pending uploads");return}
-let ok=0,fail=[];
-for(const e of pending){
-try{await uploadEntry(e);ok++}catch(err){fail.push(e)}
+if(!pending.length){
+msg("No pending uploads");
+return;
 }
-pending=fail;
+
+let ok=0;
+let failed=[];
+
+for(const entry of pending){
+try{
+await uploadEntry(entry);
+ok++;
+}catch(e){
+failed.push(entry);
+}
+}
+
+pending=failed;
 savePending();
 msg(ok+" uploaded, "+pending.length+" pending");
 }
@@ -529,7 +629,10 @@ function savePending(){
 localStorage.setItem(PENDING_KEY,JSON.stringify(pending));
 updatePendingBadge();
 }
-function updatePendingBadge(){pendingBadge.textContent="Pending: "+pending.length}
+
+function updatePendingBadge(){
+pendingBadge.textContent="Pending: "+pending.length;
+}
 
 function clearEntry(){
 clearPhoto();
@@ -544,10 +647,17 @@ selectedProduct=null;
 productFound=false;
 qtyDigits="";
 renderQty();
+clearMsg();
 }
 
 function esc(s){
-return String(s??"").replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[m]));
+return String(s??"").replace(/[&<>"']/g,m=>({
+"&":"&amp;",
+"<":"&lt;",
+">":"&gt;",
+'"':"&quot;",
+"'":"&#039;"
+}[m]));
 }
 </script>
 </body>
